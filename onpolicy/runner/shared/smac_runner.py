@@ -14,7 +14,22 @@ class SMACRunner(Runner):
         super(SMACRunner, self).__init__(config)
 
     def run(self):
-        self.warmup()   
+        self.warmup() 
+        self.obs_pert_range = 0  
+
+        # self.restore()
+        # self.eval(1)
+        # self.act_pert_range = 0
+        # for i in range(20):
+        #     self.act_pert_range = self.act_pert_range + .2
+        #     print("===random noise max limit for action===", self.act_pert_range)
+        #     self.eval(1,action_purtub=self.act_pert_range)
+        #     self.obs_pert_range = self.obs_pert_range + .025
+        #     print("===random noise max limit for obs===", self.obs_pert_range)
+        #     self.eval_obs(1)
+        #     print("===applied both obs+act noise===")
+        #     self.eval_obs(1,action_purtub=self.act_pert_range)
+        #     print("===========================================")
 
         start = time.time()
         episodes = int(self.num_env_steps) // self.episode_length // self.n_rollout_threads
@@ -94,6 +109,7 @@ class SMACRunner(Runner):
             # eval
             if episode % self.eval_interval == 0 and self.use_eval:
                 self.eval(total_num_steps)
+                self.eval_obs(total_num_steps)
 
     def warmup(self):
         # reset env
@@ -159,7 +175,7 @@ class SMACRunner(Runner):
                 self.writter.add_scalars(k, {k: v}, total_num_steps)
     
     @torch.no_grad()
-    def eval(self, total_num_steps):
+    def eval(self, total_num_steps, action_purtub = 0.0):
         eval_battles_won = 0
         eval_episode = 0
 
@@ -178,7 +194,8 @@ class SMACRunner(Runner):
                                         np.concatenate(eval_rnn_states),
                                         np.concatenate(eval_masks),
                                         np.concatenate(eval_available_actions),
-                                        deterministic=True)
+                                        deterministic=True,
+                                        action_purtub=action_purtub)
             eval_actions = np.array(np.split(_t2n(eval_actions), self.n_eval_rollout_threads))
             eval_rnn_states = np.array(np.split(_t2n(eval_rnn_states), self.n_eval_rollout_threads))
             
@@ -212,3 +229,84 @@ class SMACRunner(Runner):
                 else:
                     self.writter.add_scalars("eval_win_rate", {"eval_win_rate": eval_win_rate}, total_num_steps)
                 break
+
+    @torch.no_grad()
+    def eval_obs(self, total_num_steps, action_purtub = 0.0):
+        eval_battles_won = 0
+        eval_episode = 0
+
+        eval_episode_rewards = []
+        one_episode_rewards = []
+
+        eval_obs, eval_share_obs, eval_available_actions = self.eval_envs.reset()
+
+        eval_rnn_states = np.zeros((self.n_eval_rollout_threads, self.num_agents, self.recurrent_N, self.hidden_size), dtype=np.float32)
+        eval_masks = np.ones((self.n_eval_rollout_threads, self.num_agents, 1), dtype=np.float32)
+
+        while True:
+            self.trainer.prep_rollout()
+            eval_actions, eval_rnn_states = \
+                self.trainer.policy.act(np.concatenate(eval_obs),
+                                        np.concatenate(eval_rnn_states),
+                                        np.concatenate(eval_masks),
+                                        np.concatenate(eval_available_actions),
+                                        deterministic=True,
+                                        action_purtub=action_purtub)
+            eval_actions = np.array(np.split(_t2n(eval_actions), self.n_eval_rollout_threads))
+            eval_rnn_states = np.array(np.split(_t2n(eval_rnn_states), self.n_eval_rollout_threads))
+            
+            # Obser reward and next obs
+            eval_obs, eval_share_obs, eval_rewards, eval_dones, eval_infos, eval_available_actions = self.eval_envs.step(eval_actions)
+
+            # --- Apply observation noise / perturbation ---
+            eval_obs = self.apply_observation_disruption(eval_obs)
+
+            one_episode_rewards.append(eval_rewards)
+
+            eval_dones_env = np.all(eval_dones, axis=1)
+
+            eval_rnn_states[eval_dones_env == True] = np.zeros(((eval_dones_env == True).sum(), self.num_agents, self.recurrent_N, self.hidden_size), dtype=np.float32)
+
+            eval_masks = np.ones((self.all_args.n_eval_rollout_threads, self.num_agents, 1), dtype=np.float32)
+            eval_masks[eval_dones_env == True] = np.zeros(((eval_dones_env == True).sum(), self.num_agents, 1), dtype=np.float32)
+
+            for eval_i in range(self.n_eval_rollout_threads):
+                if eval_dones_env[eval_i]:
+                    eval_episode += 1
+                    eval_episode_rewards.append(np.sum(one_episode_rewards, axis=0))
+                    one_episode_rewards = []
+                    if eval_infos[eval_i][0]['won']:
+                        eval_battles_won += 1
+
+            if eval_episode >= self.all_args.eval_episodes:
+                eval_episode_rewards = np.array(eval_episode_rewards)
+                eval_env_infos = {'eval_average_episode_rewards_under_obs_perturb': eval_episode_rewards}                
+                self.log_env(eval_env_infos, total_num_steps)
+                eval_win_rate = eval_battles_won/eval_episode
+                print("purt_eval win rate is {}.".format(eval_win_rate))
+                if self.use_wandb:
+                    wandb.log({"eval_win_rate_purt": eval_win_rate}, step=total_num_steps)
+                else:
+                    self.writter.add_scalars("eval_win_rate", {"eval_win_rate": eval_win_rate}, total_num_steps)
+                break
+
+
+    def apply_observation_disruption(self, observations):
+        """
+        Apply simple observation noise or perturbation to all envs/agents.
+        Input shape: list of [n_envs][n_agents][obs_dim]
+        Output shape: same (perturbed)
+        """
+        perturbed_obs = []
+        for env_obs in observations:  # loop over environments
+            env_perturbed = []
+            for agent_obs in env_obs:  # loop over agents
+                obs_arr = np.array(agent_obs, dtype=np.float32)
+                
+                # === Example noise or constant shift ===
+                noise = np.random.normal(0, self.obs_pert_range, size=obs_arr.shape)
+                obs_arr = obs_arr + noise
+
+                env_perturbed.append(obs_arr)
+            perturbed_obs.append(env_perturbed)
+        return perturbed_obs

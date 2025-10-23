@@ -83,17 +83,17 @@ def main(args):
         "The simple_speaker_listener scenario can not use shared policy. Please check the config.py.")
 
     # cuda
-    if all_args.cuda and torch.cuda.is_available():
-        print("choose to use gpu...")
-        device = torch.device("cuda:0")
-        torch.set_num_threads(all_args.n_training_threads)
-        if all_args.cuda_deterministic:
-            torch.backends.cudnn.benchmark = False
-            torch.backends.cudnn.deterministic = True
-    else:
-        print("choose to use cpu...")
-        device = torch.device("cpu")
-        torch.set_num_threads(all_args.n_training_threads)
+    # if all_args.cuda and torch.cuda.is_available():
+    #     print("choose to use gpu...")
+    #     device = torch.device("cuda:0")
+    #     torch.set_num_threads(all_args.n_training_threads)
+    #     if all_args.cuda_deterministic:
+    #         torch.backends.cudnn.benchmark = False
+    #         torch.backends.cudnn.deterministic = True
+    # else:
+    print("choose to use cpu...")
+    device = torch.device("cpu")
+    torch.set_num_threads(all_args.n_training_threads)
 
     # run dir
     run_dir = Path(os.path.split(os.path.dirname(os.path.abspath(__file__)))[

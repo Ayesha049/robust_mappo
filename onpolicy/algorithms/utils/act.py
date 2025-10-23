@@ -38,7 +38,7 @@ class ACTLayer(nn.Module):
             self.action_outs = nn.ModuleList([DiagGaussian(inputs_dim, continous_dim, use_orthogonal, gain), Categorical(
                 inputs_dim, discrete_dim, use_orthogonal, gain)])
     
-    def forward(self, x, available_actions=None, deterministic=False):
+    def forward(self, x, available_actions=None, deterministic=False, action_purtub=0.0):
         """
         Compute actions and action logprobs from given input.
         :param x: (torch.Tensor) input to network.
@@ -50,6 +50,7 @@ class ACTLayer(nn.Module):
         :return action_log_probs: (torch.Tensor) log probabilities of taken actions.
         """
         if self.mixed_action :
+            # print("=====mixed action====")
             actions = []
             action_log_probs = []
             for action_out in self.action_outs:
@@ -63,6 +64,7 @@ class ACTLayer(nn.Module):
             action_log_probs = torch.sum(torch.cat(action_log_probs, -1), -1, keepdim=True)
 
         elif self.multi_discrete:
+            # print("=====multi discrese action====")
             actions = []
             action_log_probs = []
             for action_out in self.action_outs:
@@ -76,8 +78,15 @@ class ACTLayer(nn.Module):
             action_log_probs = torch.cat(action_log_probs, -1)
         
         else:
+            # print("=====else====")
+            # print(x)
+            # print(available_actions)
             action_logits = self.action_out(x, available_actions)
+            # print(action_logits)
+            action_logits = action_logits.add_noise(action_purtub)
+            # print(action_logits)
             actions = action_logits.mode() if deterministic else action_logits.sample() 
+            # print(actions)
             action_log_probs = action_logits.log_probs(actions)
         
         return actions, action_log_probs

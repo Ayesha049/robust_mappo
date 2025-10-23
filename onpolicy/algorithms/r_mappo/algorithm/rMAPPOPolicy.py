@@ -46,7 +46,7 @@ class R_MAPPOPolicy:
         update_linear_schedule(self.critic_optimizer, episode, episodes, self.critic_lr)
 
     def get_actions(self, cent_obs, obs, rnn_states_actor, rnn_states_critic, masks, available_actions=None,
-                    deterministic=False):
+                    deterministic=False, action_purtub=0.0):
         """
         Compute actions and value function predictions for the given inputs.
         :param cent_obs (np.ndarray): centralized input to the critic.
@@ -68,7 +68,7 @@ class R_MAPPOPolicy:
                                                                  rnn_states_actor,
                                                                  masks,
                                                                  available_actions,
-                                                                 deterministic)
+                                                                 deterministic,action_purtub)
 
         values, rnn_states_critic = self.critic(cent_obs, rnn_states_critic, masks)
         return values, actions, action_log_probs, rnn_states_actor, rnn_states_critic
@@ -113,7 +113,7 @@ class R_MAPPOPolicy:
         values, _ = self.critic(cent_obs, rnn_states_critic, masks)
         return values, action_log_probs, dist_entropy
 
-    def act(self, obs, rnn_states_actor, masks, available_actions=None, deterministic=False):
+    def act(self, obs, rnn_states_actor, masks, available_actions=None, deterministic=False,action_purtub=0.0):
         """
         Compute actions using the given inputs.
         :param obs (np.ndarray): local agent inputs to the actor.
@@ -123,5 +123,5 @@ class R_MAPPOPolicy:
                                   (if None, all actions available)
         :param deterministic: (bool) whether the action should be mode of distribution or should be sampled.
         """
-        actions, _, rnn_states_actor = self.actor(obs, rnn_states_actor, masks, available_actions, deterministic)
+        actions, _, rnn_states_actor = self.actor(obs, rnn_states_actor, masks, available_actions, deterministic,action_purtub)
         return actions, rnn_states_actor

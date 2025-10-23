@@ -75,11 +75,20 @@ class Runner(object):
                             self.envs.action_space[0],
                             device = self.device)
 
+        # policy network
+        # self.adv_policy = Policy(self.all_args,
+        #                     self.envs.observation_space[0],
+        #                     share_observation_space,
+        #                     self.envs.observation_space[0],
+        #                     device = self.device)
+
         if self.model_dir is not None:
             self.restore()
 
         # algorithm
         self.trainer = TrainAlgo(self.all_args, self.policy, device = self.device)
+        #adv trainer
+        # self.adv_trainer = TrainAlgo(self.all_args, self.adv_policy, device = self.device)
         
         # buffer
         self.buffer = SharedReplayBuffer(self.all_args,
@@ -126,6 +135,7 @@ class Runner(object):
 
     def save(self):
         """Save policy's actor and critic networks."""
+        print(str(self.save_dir))
         policy_actor = self.trainer.policy.actor
         torch.save(policy_actor.state_dict(), str(self.save_dir) + "/actor.pt")
         policy_critic = self.trainer.policy.critic
@@ -136,14 +146,16 @@ class Runner(object):
 
     def restore(self):
         """Restore policy's networks from a saved model."""
-        policy_actor_state_dict = torch.load(str(self.model_dir) + '/actor.pt')
+        
+        policy_actor_state_dict = torch.load("/home/axs0940/mappo/onpolicy/scripts/results/StarCraft2/8m/rmappo/check/wandb/run-20251021_205351-i3dzj7ir/files" + '/actor.pt')
+        # policy_actor_state_dict = torch.load(str(self.model_dir) + '/actor.pt')
         self.policy.actor.load_state_dict(policy_actor_state_dict)
-        if not self.all_args.use_render:
-            policy_critic_state_dict = torch.load(str(self.model_dir) + '/critic.pt')
-            self.policy.critic.load_state_dict(policy_critic_state_dict)
-            if self.trainer._use_valuenorm:
-                policy_vnorm_state_dict = torch.load(str(self.model_dir) + '/vnorm.pt')
-                self.trainer.value_normalizer.load_state_dict(policy_vnorm_state_dict)
+        # if not self.all_args.use_render:
+        #     policy_critic_state_dict = torch.load(str(self.model_dir) + '/critic.pt')
+        #     self.policy.critic.load_state_dict(policy_critic_state_dict)
+        #     if self.trainer._use_valuenorm:
+        #         policy_vnorm_state_dict = torch.load(str(self.model_dir) + '/vnorm.pt')
+        #         self.trainer.value_normalizer.load_state_dict(policy_vnorm_state_dict)
  
     def log_train(self, train_infos, total_num_steps):
         """

@@ -40,7 +40,7 @@ class R_Actor(nn.Module):
 
         self.to(device)
 
-    def forward(self, obs, rnn_states, masks, available_actions=None, deterministic=False):
+    def forward(self, obs, rnn_states, masks, available_actions=None, deterministic=False, action_purtub=0.0):
         """
         Compute actions from the given inputs.
         :param obs: (np.ndarray / torch.Tensor) observation inputs into network.
@@ -65,7 +65,7 @@ class R_Actor(nn.Module):
         if self._use_naive_recurrent_policy or self._use_recurrent_policy:
             actor_features, rnn_states = self.rnn(actor_features, rnn_states, masks)
 
-        actions, action_log_probs = self.act(actor_features, available_actions, deterministic)
+        actions, action_log_probs = self.act(actor_features, available_actions, deterministic,action_purtub)
 
         return actions, action_log_probs, rnn_states
 

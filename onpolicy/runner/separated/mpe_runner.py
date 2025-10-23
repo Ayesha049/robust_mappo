@@ -78,6 +78,7 @@ class MPERunner(Runner):
             # eval
             if episode % self.eval_interval == 0 and self.use_eval:
                 self.eval(total_num_steps)
+                self.eval_obs(total_num_steps)
 
     def warmup(self):
         # reset env
@@ -235,6 +236,136 @@ class MPERunner(Runner):
             print("eval average episode rewards of agent%i: " % agent_id + str(eval_average_episode_rewards))
 
         self.log_train(eval_train_infos, total_num_steps)  
+
+
+    @torch.no_grad()
+    def eval_obs(self, total_num_steps):
+        """
+        Evaluate the trained policies under observation perturbation.
+        Handles both list- and array-based env returns robustly.
+        """
+        eval_episode_rewards = []
+
+        # Ensure reset output is always a NumPy array
+        eval_obs = np.array(self.eval_envs.reset(), dtype=object)
+
+        eval_rnn_states = np.zeros(
+            (self.n_eval_rollout_threads, self.num_agents, self.recurrent_N, self.hidden_size),
+            dtype=np.float32
+        )
+        eval_masks = np.ones(
+            (self.n_eval_rollout_threads, self.num_agents, 1),
+            dtype=np.float32
+        )
+
+        for eval_step in range(self.episode_length):
+            eval_temp_actions_env = []
+
+            # --- Agent loop ---
+            for agent_id in range(self.num_agents):
+                self.trainer[agent_id].prep_rollout()
+
+                # Make sure eval_obs is a NumPy array
+                eval_obs = np.array(eval_obs, dtype=object)
+
+                # Extract observations for this agent across all env threads
+                # Shape: (n_eval_rollout_threads, obs_dim)
+                obs_input = np.stack([eval_obs[env_id][agent_id] for env_id in range(self.n_eval_rollout_threads)])
+
+                eval_action, eval_rnn_state = self.trainer[agent_id].policy.act(
+                    obs_input,
+                    eval_rnn_states[:, agent_id],
+                    eval_masks[:, agent_id],
+                    deterministic=True
+                )
+
+                eval_action = eval_action.detach().cpu().numpy()
+
+                # --- Convert action to one-hot encoding ---
+                if self.eval_envs.action_space[agent_id].__class__.__name__ == 'MultiDiscrete':
+                    for i in range(self.eval_envs.action_space[agent_id].shape):
+                        eval_uc_action_env = np.eye(
+                            self.eval_envs.action_space[agent_id].high[i] + 1
+                        )[eval_action[:, i]]
+
+                        if i == 0:
+                            eval_action_env = eval_uc_action_env
+                        else:
+                            eval_action_env = np.concatenate((eval_action_env, eval_uc_action_env), axis=1)
+
+                elif self.eval_envs.action_space[agent_id].__class__.__name__ == 'Discrete':
+                    eval_action_env = np.squeeze(
+                        np.eye(self.eval_envs.action_space[agent_id].n)[eval_action], 1
+                    )
+                else:
+                    raise NotImplementedError
+
+                eval_temp_actions_env.append(eval_action_env)
+                eval_rnn_states[:, agent_id] = _t2n(eval_rnn_state)
+
+            # --- Combine actions for each env thread ---
+            eval_actions_env = []
+            for i in range(self.n_eval_rollout_threads):
+                eval_one_hot_action_env = [act[i] for act in eval_temp_actions_env]
+                eval_actions_env.append(eval_one_hot_action_env)
+
+            # --- Step the environment ---
+            eval_obs, eval_rewards, eval_dones, eval_infos = self.eval_envs.step(eval_actions_env)
+
+            # Convert eval_obs to array (some envs return lists)
+            eval_obs = np.array(eval_obs, dtype=object)
+
+            # --- Apply observation disruption ---
+            eval_obs = self.apply_observation_disruption(eval_obs)
+
+            eval_episode_rewards.append(eval_rewards)
+
+            # --- Handle done masks ---
+            eval_rnn_states[eval_dones == True] = np.zeros(
+                ((eval_dones == True).sum(), self.recurrent_N, self.hidden_size),
+                dtype=np.float32
+            )
+            eval_masks = np.ones(
+                (self.n_eval_rollout_threads, self.num_agents, 1),
+                dtype=np.float32
+            )
+            eval_masks[eval_dones == True] = np.zeros(
+                ((eval_dones == True).sum(), 1),
+                dtype=np.float32
+            )
+
+        # --- Aggregate evaluation metrics ---
+        eval_episode_rewards = np.array(eval_episode_rewards)
+
+        eval_train_infos = []
+        for agent_id in range(self.num_agents):
+            eval_average_episode_rewards = np.mean(np.sum(eval_episode_rewards[:, :, agent_id], axis=0))
+            eval_train_infos.append({'eval_obs_perturbed_average_episode_rewards': eval_average_episode_rewards})
+            print(f"eval average episode rewards of agent{agent_id}: {eval_average_episode_rewards}")
+
+        self.log_train(eval_train_infos, total_num_steps)
+
+
+
+    def apply_observation_disruption(self, observations):
+        """
+        Apply simple observation noise or perturbation to all envs/agents.
+        Input shape: list of [n_envs][n_agents][obs_dim]
+        Output shape: same (perturbed)
+        """
+        perturbed_obs = []
+        for env_obs in observations:  # loop over environments
+            env_perturbed = []
+            for agent_obs in env_obs:  # loop over agents
+                obs_arr = np.array(agent_obs, dtype=np.float32)
+                
+                # === Example noise or constant shift ===
+                noise = np.random.normal(0, 0.05, size=obs_arr.shape)
+                obs_arr = obs_arr + noise
+
+                env_perturbed.append(obs_arr)
+            perturbed_obs.append(env_perturbed)
+        return perturbed_obs
 
     @torch.no_grad()
     def render(self):        
