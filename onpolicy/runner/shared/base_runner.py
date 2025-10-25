@@ -74,13 +74,15 @@ class Runner(object):
                             share_observation_space,
                             self.envs.action_space[0],
                             device = self.device)
+        
+        # print("=====obs space===", self.envs.observation_space[0])
 
         # policy network
-        # self.adv_policy = Policy(self.all_args,
-        #                     self.envs.observation_space[0],
-        #                     share_observation_space,
-        #                     self.envs.observation_space[0],
-        #                     device = self.device)
+        self.adv_policy = Policy(self.all_args,
+                            self.envs.observation_space[0],
+                            share_observation_space,
+                            self.envs.observation_space[0],
+                            device = self.device)
 
         if self.model_dir is not None:
             self.restore()
@@ -88,7 +90,7 @@ class Runner(object):
         # algorithm
         self.trainer = TrainAlgo(self.all_args, self.policy, device = self.device)
         #adv trainer
-        # self.adv_trainer = TrainAlgo(self.all_args, self.adv_policy, device = self.device)
+        self.adv_trainer = TrainAlgo(self.all_args, self.adv_policy, device = self.device)
         
         # buffer
         self.buffer = SharedReplayBuffer(self.all_args,
@@ -96,6 +98,13 @@ class Runner(object):
                                         self.envs.observation_space[0],
                                         share_observation_space,
                                         self.envs.action_space[0])
+        
+        # adv_buffer
+        self.adv_buffer = SharedReplayBuffer(self.all_args,
+                                        self.num_agents,
+                                        self.envs.observation_space[0],
+                                        share_observation_space,
+                                        self.envs.observation_space[0])
 
     def run(self):
         """Collect training data, perform training updates, and evaluate policy."""
@@ -125,6 +134,16 @@ class Runner(object):
                                                 np.concatenate(self.buffer.masks[-1]))
         next_values = np.array(np.split(_t2n(next_values), self.n_rollout_threads))
         self.buffer.compute_returns(next_values, self.trainer.value_normalizer)
+
+    @torch.no_grad()
+    def adv_compute(self):
+        """Calculate returns for the collected data."""
+        self.adv_trainer.prep_rollout()
+        next_values = self.adv_trainer.policy.get_values(np.concatenate(self.buffer.share_obs[-1]),
+                                                np.concatenate(self.buffer.rnn_states_critic[-1]),
+                                                np.concatenate(self.buffer.masks[-1]))
+        next_values = np.array(np.split(_t2n(next_values), self.n_rollout_threads))
+        self.adv_buffer.compute_returns(next_values, self.adv_trainer.value_normalizer)
     
     def train(self):
         """Train policies with data in buffer. """
@@ -132,10 +151,17 @@ class Runner(object):
         train_infos = self.trainer.train(self.buffer)      
         self.buffer.after_update()
         return train_infos
+    
+    def adv_train(self):
+        """Train policies with data in buffer. """
+        self.adv_trainer.prep_training()
+        train_infos = self.adv_trainer.train(self.adv_buffer)      
+        self.adv_buffer.after_update()
+        return train_infos
 
     def save(self):
         """Save policy's actor and critic networks."""
-        print(str(self.save_dir))
+        # print(str(self.save_dir))
         policy_actor = self.trainer.policy.actor
         torch.save(policy_actor.state_dict(), str(self.save_dir) + "/actor.pt")
         policy_critic = self.trainer.policy.critic
@@ -147,7 +173,7 @@ class Runner(object):
     def restore(self):
         """Restore policy's networks from a saved model."""
         
-        policy_actor_state_dict = torch.load("/home/axs0940/mappo/onpolicy/scripts/results/StarCraft2/8m/rmappo/check/wandb/run-20251021_205351-i3dzj7ir/files" + '/actor.pt')
+        policy_actor_state_dict = torch.load("/home/axs0940/mappo/onpolicy/scripts/results/StarCraft2/3m/rmappo/check/wandb/run-20251021_190741-bf90jyuf/files" + '/actor.pt')
         # policy_actor_state_dict = torch.load(str(self.model_dir) + '/actor.pt')
         self.policy.actor.load_state_dict(policy_actor_state_dict)
         # if not self.all_args.use_render:

@@ -15,12 +15,13 @@ class SMACRunner(Runner):
 
     def run(self):
         self.warmup() 
-        self.obs_pert_range = 0  
+        self.obs_pert_range = 0.05
 
         # self.restore()
         # self.eval(1)
         # self.act_pert_range = 0
-        # for i in range(20):
+        # self.obs_pert_range = 0
+        # for i in range(10):
         #     self.act_pert_range = self.act_pert_range + .2
         #     print("===random noise max limit for action===", self.act_pert_range)
         #     self.eval(1,action_purtub=self.act_pert_range)
@@ -40,10 +41,16 @@ class SMACRunner(Runner):
         for episode in range(episodes):
             if self.use_linear_lr_decay:
                 self.trainer.policy.lr_decay(episode, episodes)
+                self.adv_trainer.policy.lr_decay(episode, episodes)
 
             for step in range(self.episode_length):
+
+                #Adv actions
+                adv_values, adv_actions, adv_action_log_probs, adv_rnn_states, adv_rnn_states_critic = self.adv_collect(step)
+                # print("====adv action====", adv_actions)
+
                 # Sample actions
-                values, actions, action_log_probs, rnn_states, rnn_states_critic = self.collect(step)
+                values, actions, action_log_probs, rnn_states, rnn_states_critic = self.collect(step, adv_actions)
                     
                 # Obser reward and next obs
                 obs, share_obs, rewards, dones, infos, available_actions = self.envs.step(actions)
@@ -51,13 +58,18 @@ class SMACRunner(Runner):
                 data = obs, share_obs, rewards, dones, infos, available_actions, \
                        values, actions, action_log_probs, \
                        rnn_states, rnn_states_critic 
-                
+                adv_data = obs, share_obs, rewards*-1, dones, infos, available_actions, \
+                       adv_values, adv_actions, adv_action_log_probs, \
+                       adv_rnn_states, adv_rnn_states_critic 
                 # insert data into buffer
                 self.insert(data)
+                self.adv_insert(adv_data)
 
             # compute return and update network
             self.compute()
             train_infos = self.train()
+            self.adv_compute()
+            train_infos = self.adv_train()
             
             # post process
             total_num_steps = (episode + 1) * self.episode_length * self.n_rollout_threads           
@@ -123,16 +135,65 @@ class SMACRunner(Runner):
         self.buffer.obs[0] = obs.copy()
         self.buffer.available_actions[0] = available_actions.copy()
 
+        self.adv_buffer.share_obs[0] = share_obs.copy()
+        self.adv_buffer.obs[0] = obs.copy()
+        # self.adv_buffer.available_actions[0] = None
+
     @torch.no_grad()
-    def collect(self, step):
+    def collect(self, step, noise=None):
+        # print("===obs in smac runner==", self.buffer.obs[step])
         self.trainer.prep_rollout()
+        if noise is None:
+            value, action, action_log_prob, rnn_state, rnn_state_critic \
+                = self.trainer.policy.get_actions(np.concatenate(self.buffer.share_obs[step]),
+                                                np.concatenate(self.buffer.obs[step]),
+                                                np.concatenate(self.buffer.rnn_states[step]),
+                                                np.concatenate(self.buffer.rnn_states_critic[step]),
+                                                np.concatenate(self.buffer.masks[step]),
+                                                np.concatenate(self.buffer.available_actions[step]))
+        else:
+            # Get original observations as tensor
+            obs_tensor = torch.tensor(np.concatenate(self.buffer.obs[step]), dtype=torch.float32)
+            # if self.trainer.policy.device.type == "cuda":
+            #     obs_tensor = obs_tensor.cuda()
+
+
+            # print("obs_tensor.shape:", obs_tensor.shape)
+            # print("noise.shape:", noise.shape)
+            # Add noise
+            noise = 0 * noise.reshape(-1, obs_tensor.shape[1])
+            obs_tensor = obs_tensor + noise 
+            
+
+            
+
+            # Pass noisy_obs to policy
+            value, action, action_log_prob, rnn_state, rnn_state_critic \
+                = self.trainer.policy.get_actions(np.concatenate(self.buffer.share_obs[step]),
+                                                obs_tensor.cpu().numpy(),
+                                                np.concatenate(self.buffer.rnn_states[step]),
+                                                np.concatenate(self.buffer.rnn_states_critic[step]),
+                                                np.concatenate(self.buffer.masks[step]),
+                                                np.concatenate(self.buffer.available_actions[step]))
+
+        # [self.envs, agents, dim]
+        values = np.array(np.split(_t2n(value), self.n_rollout_threads))
+        actions = np.array(np.split(_t2n(action), self.n_rollout_threads))
+        action_log_probs = np.array(np.split(_t2n(action_log_prob), self.n_rollout_threads))
+        rnn_states = np.array(np.split(_t2n(rnn_state), self.n_rollout_threads))
+        rnn_states_critic = np.array(np.split(_t2n(rnn_state_critic), self.n_rollout_threads))
+
+        return values, actions, action_log_probs, rnn_states, rnn_states_critic
+    
+    @torch.no_grad()
+    def adv_collect(self, step):
+        self.adv_trainer.prep_rollout()
         value, action, action_log_prob, rnn_state, rnn_state_critic \
-            = self.trainer.policy.get_actions(np.concatenate(self.buffer.share_obs[step]),
-                                            np.concatenate(self.buffer.obs[step]),
-                                            np.concatenate(self.buffer.rnn_states[step]),
-                                            np.concatenate(self.buffer.rnn_states_critic[step]),
-                                            np.concatenate(self.buffer.masks[step]),
-                                            np.concatenate(self.buffer.available_actions[step]))
+            = self.adv_trainer.policy.get_actions(np.concatenate(self.adv_buffer.share_obs[step]),
+                                            np.concatenate(self.adv_buffer.obs[step]),
+                                            np.concatenate(self.adv_buffer.rnn_states[step]),
+                                            np.concatenate(self.adv_buffer.rnn_states_critic[step]),
+                                            np.concatenate(self.adv_buffer.masks[step]))
         # [self.envs, agents, dim]
         values = np.array(np.split(_t2n(value), self.n_rollout_threads))
         actions = np.array(np.split(_t2n(action), self.n_rollout_threads))
@@ -165,6 +226,31 @@ class SMACRunner(Runner):
 
         self.buffer.insert(share_obs, obs, rnn_states, rnn_states_critic,
                            actions, action_log_probs, values, rewards, masks, bad_masks, active_masks, available_actions)
+        
+    
+    def adv_insert(self, data):
+        obs, share_obs, rewards, dones, infos, available_actions, \
+        values, actions, action_log_probs, rnn_states, rnn_states_critic = data
+
+        dones_env = np.all(dones, axis=1)
+
+        rnn_states[dones_env == True] = np.zeros(((dones_env == True).sum(), self.num_agents, self.recurrent_N, self.hidden_size), dtype=np.float32)
+        rnn_states_critic[dones_env == True] = np.zeros(((dones_env == True).sum(), self.num_agents, *self.buffer.rnn_states_critic.shape[3:]), dtype=np.float32)
+
+        masks = np.ones((self.n_rollout_threads, self.num_agents, 1), dtype=np.float32)
+        masks[dones_env == True] = np.zeros(((dones_env == True).sum(), self.num_agents, 1), dtype=np.float32)
+
+        active_masks = np.ones((self.n_rollout_threads, self.num_agents, 1), dtype=np.float32)
+        active_masks[dones == True] = np.zeros(((dones == True).sum(), 1), dtype=np.float32)
+        active_masks[dones_env == True] = np.ones(((dones_env == True).sum(), self.num_agents, 1), dtype=np.float32)
+
+        bad_masks = np.array([[[0.0] if info[agent_id]['bad_transition'] else [1.0] for agent_id in range(self.num_agents)] for info in infos])
+        
+        if not self.use_centralized_V:
+            share_obs = obs
+
+        self.adv_buffer.insert(share_obs, obs, rnn_states, rnn_states_critic,
+                           actions, action_log_probs, values, rewards, masks, bad_masks, active_masks)
 
     def log_train(self, train_infos, total_num_steps):
         train_infos["average_step_rewards"] = np.mean(self.buffer.rewards)

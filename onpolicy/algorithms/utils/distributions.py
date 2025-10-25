@@ -44,7 +44,7 @@ class FixedNormal(torch.distributions.Normal):
         return super().log_prob(actions).sum(-1, keepdim=True)
 
     def entropy(self):
-        return super.entropy().sum(-1)
+        return super(FixedNormal, self).entropy().sum(-1)  # ✅ correct usage of super()
 
     def mode(self):
         return self.mean

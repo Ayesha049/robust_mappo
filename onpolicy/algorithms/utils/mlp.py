@@ -40,6 +40,7 @@ class MLPBase(nn.Module):
         self.hidden_size = args.hidden_size
 
         obs_dim = obs_shape[0]
+        # print("====obs_dim in MLP Layer====", obs_dim)
 
         if self._use_feature_normalization:
             self.feature_norm = nn.LayerNorm(obs_dim)

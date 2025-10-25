@@ -4,6 +4,7 @@ import torch.nn as nn
 from onpolicy.utils.util import get_gard_norm, huber_loss, mse_loss
 from onpolicy.utils.valuenorm import ValueNorm
 from onpolicy.algorithms.utils.util import check
+from onpolicy.algorithms.utils.distributions import Bernoulli, Categorical, DiagGaussian
 
 class R_MAPPO():
     """
@@ -120,6 +121,8 @@ class R_MAPPO():
                                                                               masks_batch, 
                                                                               available_actions_batch,
                                                                               active_masks_batch)
+
+        
         # actor update
         imp_weights = torch.exp(action_log_probs - old_action_log_probs_batch)
 

@@ -30,8 +30,10 @@ def mse_loss(e):
 
 def get_shape_from_obs_space(obs_space):
     if obs_space.__class__.__name__ == 'Box':
+        # print("===obs box===")
         obs_shape = obs_space.shape
     elif obs_space.__class__.__name__ == 'list':
+        # print("===obs list===")
         obs_shape = obs_space
     else:
         raise NotImplementedError
@@ -47,7 +49,8 @@ def get_shape_from_act_space(act_space):
     elif act_space.__class__.__name__ == "MultiBinary":
         act_shape = act_space.shape[0]
     else:  # agar
-        act_shape = act_space[0].shape[0] + 1  
+        # act_shape = act_space[0].shape[0] + 1  
+        act_shape = act_space[0]
     return act_shape
 
 
