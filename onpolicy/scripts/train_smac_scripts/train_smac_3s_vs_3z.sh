@@ -2,7 +2,7 @@
 env="StarCraft2"
 map="3s_vs_3z"
 algo="rmappo"
-exp="check"
+exp="obs-robust-02"
 seed_max=1
 
 echo "env is ${env}, map is ${map}, algo is ${algo}, exp is ${exp}, max seed is ${seed_max}"
