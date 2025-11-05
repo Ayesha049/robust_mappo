@@ -284,4 +284,9 @@ def get_config():
     # pretrained parameters
     parser.add_argument("--model_dir", type=str, default=None, help="by default None. set the path to pretrained model.")
 
+    # adversarial setting
+    parser.add_argument("--robust", action='store_true', default=False, help="by default, the training is non robust. No uncertainty added during trainig")
+    parser.add_argument("--adv_type", type=str, default='obs', choices=["obs", "act", "both"])
+    parser.add_argument("--noise_alpha", type=float, default=0.02, help=" coefficience of uncertainty.")
+
     return parser

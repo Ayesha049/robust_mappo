@@ -1,4 +1,4 @@
-from .distributions import Bernoulli, Categorical, DiagGaussian
+from .distributions import Bernoulli, Categorical, DiagGaussian, FixedNormal
 import torch
 import torch.nn as nn
 
@@ -87,16 +87,26 @@ class ACTLayer(nn.Module):
             # print(x)
             # print(available_actions)
             action_logits = self.action_out(x, available_actions)
-            # print(action_logits)
+            # print("=============action logits=========",action_logits)
             action_logits = action_logits.add_noise(action_purtub)
-            # print(action_logits)
+            # print("=============action logits=========",action_logits)
             actions = action_logits.mode() if deterministic else action_logits.sample() 
             # print(actions)
             action_log_probs = action_logits.log_probs(actions)
         else:
             action_logits = self.action_out(x)
-            actions = action_logits.sample()
-            action_log_probs = action_logits.log_prob(actions)
+            # print("==================action logits=====================", action_logits)
+            
+            if isinstance(action_logits, FixedNormal):
+                actions = action_logits.sample()
+                action_log_probs = action_logits.log_prob(actions)
+            else:
+                actions = action_logits.probs
+                action_log_probs = actions
+
+
+            
+            # print("=======================adv action=========================", actions)
         
         return actions, action_log_probs
 
@@ -178,7 +188,12 @@ class ACTLayer(nn.Module):
                 dist_entropy = action_logits.entropy().mean()
         else:
             action_logits = self.action_out(x)
-            action_log_probs = action_logits.log_probs(action).sum(-1, keepdim=True)
+            # action_log_probs = action_logits.log_probs(action).sum(-1, keepdim=True)
+            if isinstance(action_logits, FixedNormal):
+                action_log_probs = action_logits.log_probs(action).sum(-1, keepdim=True)
+            else:
+                action_log_probs = action_logits.probs
+            
             dist_entropy = action_logits.entropy().mean()
         
         return action_log_probs, dist_entropy

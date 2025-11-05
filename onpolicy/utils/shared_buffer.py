@@ -21,7 +21,7 @@ class SharedReplayBuffer(object):
     :param act_space: (gym.Space) action space for agents.
     """
 
-    def __init__(self, args, num_agents, obs_space, cent_obs_space, act_space):
+    def __init__(self, args, num_agents, obs_space, cent_obs_space, act_space, act_adv=False):
         self.episode_length = args.episode_length
         self.n_rollout_threads = args.n_rollout_threads
         self.hidden_size = args.hidden_size
@@ -60,11 +60,16 @@ class SharedReplayBuffer(object):
                                              dtype=np.float32)
         else:
             self.available_actions = None
+        if act_adv:
+            self.available_actions = None
 
         act_shape = get_shape_from_act_space(act_space)
 
+        if act_adv:
+            act_shape = act_space.n
+
         self.actions = np.zeros(
-            (self.episode_length, self.n_rollout_threads, num_agents, act_shape), dtype=np.float32)
+                (self.episode_length, self.n_rollout_threads, num_agents, act_shape), dtype=np.float32)
         self.action_log_probs = np.zeros(
             (self.episode_length, self.n_rollout_threads, num_agents, act_shape), dtype=np.float32)
         self.rewards = np.zeros(

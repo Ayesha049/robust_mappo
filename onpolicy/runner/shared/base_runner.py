@@ -21,6 +21,15 @@ class Runner(object):
         self.eval_envs = config['eval_envs']
         self.device = config['device']
         self.num_agents = config['num_agents']
+
+        #robust parameters
+        self.is_robust = self.all_args.robust
+        print("==is robust==", self.is_robust)
+        self.adv_type = self.all_args.adv_type
+        print("==adv_type==", self.adv_type)
+        self.noise_alpha = 0.00 if not self.is_robust else self.all_args.noise_alpha
+        print("==noise_alpha==", self.noise_alpha)
+
         if config.__contains__("render_envs"):
             self.render_envs = config['render_envs']       
 
@@ -77,12 +86,19 @@ class Runner(object):
         
         # print("=====obs space===", self.envs.observation_space[0])
 
-        # policy network
-        self.adv_policy = Policy(self.all_args,
-                            self.envs.observation_space[0],
-                            share_observation_space,
-                            self.envs.observation_space[0],
-                            device = self.device)
+        # adv policy network
+        if self.adv_type == "obs":
+            self.adv_policy = Policy(self.all_args,
+                                self.envs.observation_space[0],
+                                share_observation_space,
+                                self.envs.observation_space[0],
+                                device = self.device)
+        elif self.adv_type == "act":
+            self.adv_policy = Policy(self.all_args,
+                                self.envs.observation_space[0],
+                                share_observation_space,
+                                self.envs.action_space[0],
+                                device = self.device)
 
         if self.model_dir is not None:
             self.restore()
@@ -100,11 +116,19 @@ class Runner(object):
                                         self.envs.action_space[0])
         
         # adv_buffer
-        self.adv_buffer = SharedReplayBuffer(self.all_args,
+        if self.adv_type == "obs":
+            self.adv_buffer = SharedReplayBuffer(self.all_args,
                                         self.num_agents,
                                         self.envs.observation_space[0],
                                         share_observation_space,
                                         self.envs.observation_space[0])
+        elif self.adv_type == "act":
+            self.adv_buffer = SharedReplayBuffer(self.all_args,
+                                        self.num_agents,
+                                        self.envs.observation_space[0],
+                                        share_observation_space,
+                                        self.envs.action_space[0],
+                                        act_adv=True)
 
     def run(self):
         """Collect training data, perform training updates, and evaluate policy."""
@@ -170,10 +194,19 @@ class Runner(object):
             policy_vnorm = self.trainer.value_normalizer
             torch.save(policy_vnorm.state_dict(), str(self.save_dir) + "/vnorm.pt")
 
+    def save_best(self):
+        """Save policy's actor and critic networks."""
+        save_dir = str(self.save_dir) + "/best"
+        if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+        policy_actor = self.trainer.policy.actor
+        torch.save(policy_actor.state_dict(), str(save_dir) + "/actor.pt")
+
+
     def restore(self):
         """Restore policy's networks from a saved model."""
         
-        policy_actor_state_dict = torch.load("/home/axs0940/mappo/onpolicy/scripts/results/StarCraft2/3m/rmappo/check/wandb/run-20251021_190741-bf90jyuf/files" + '/actor.pt')
+        policy_actor_state_dict = torch.load("/home/axs0940/mappo/onpolicy/scripts/results/StarCraft2/8m/rmappo/non-robust/wandb/run-20251026_195231-4z8gvijw/files/best" + '/actor.pt')
         # policy_actor_state_dict = torch.load(str(self.model_dir) + '/actor.pt')
         self.policy.actor.load_state_dict(policy_actor_state_dict)
         # if not self.all_args.use_render:

@@ -24,12 +24,16 @@ class FixedCategorical(torch.distributions.Categorical):
             .unsqueeze(-1)
         )
     
-    def add_noise(self, noise_std=0.1):
+    def add_noise(self, noise=0.1):
         """Add Gaussian noise to logits before sampling"""
         if hasattr(self, "logits") and self.logits is not None:
-            # print(self.logits)
-            noisy_logits = self.logits + torch.randn_like(self.logits) * noise_std
-            # print(noisy_logits)
+            # print("===========in dist logits============",self.logits)
+            if isinstance(noise, float):
+                noisy_logits = self.logits + torch.randn_like(self.logits) * noise
+            else:
+                noisy_logits = self.logits + noise
+            # print("=========noise===========",noise)
+            # print("=========noisy logits===========",noisy_logits)
             return FixedCategorical(logits=noisy_logits)
         else:
             raise ValueError("No logits found to add noise to.")

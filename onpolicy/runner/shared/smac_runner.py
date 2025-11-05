@@ -16,6 +16,7 @@ class SMACRunner(Runner):
     def run(self):
         self.warmup() 
         self.obs_pert_range = 0.05
+        self.best_win_rate = 0
 
         # self.restore()
         # self.eval(1)
@@ -120,8 +121,18 @@ class SMACRunner(Runner):
 
             # eval
             if episode % self.eval_interval == 0 and self.use_eval:
-                self.eval(total_num_steps)
-                self.eval_obs(total_num_steps)
+                eval_win_rate = self.eval(total_num_steps)
+                if eval_win_rate > self.best_win_rate:
+                    self.best_win_rate = eval_win_rate
+                    print("===saving best model===")
+                    self.save_best()
+                self.obs_pert_range = 0
+                self.act_pert_range = 0.5
+                for i in range(4):
+                    self.obs_pert_range = self.obs_pert_range + 0.05
+                    self.eval_obs(total_num_steps)
+                    self.act_pert_range = self.act_pert_range + 0.5
+                    self.eval(total_num_steps,action_purtub=self.act_pert_range)
 
     def warmup(self):
         # reset env
@@ -143,7 +154,7 @@ class SMACRunner(Runner):
     def collect(self, step, noise=None):
         # print("===obs in smac runner==", self.buffer.obs[step])
         self.trainer.prep_rollout()
-        if noise is None:
+        if not self.is_robust:
             value, action, action_log_prob, rnn_state, rnn_state_critic \
                 = self.trainer.policy.get_actions(np.concatenate(self.buffer.share_obs[step]),
                                                 np.concatenate(self.buffer.obs[step]),
@@ -152,29 +163,31 @@ class SMACRunner(Runner):
                                                 np.concatenate(self.buffer.masks[step]),
                                                 np.concatenate(self.buffer.available_actions[step]))
         else:
-            # Get original observations as tensor
-            obs_tensor = torch.tensor(np.concatenate(self.buffer.obs[step]), dtype=torch.float32)
-            # if self.trainer.policy.device.type == "cuda":
-            #     obs_tensor = obs_tensor.cuda()
+            if self.adv_type == "obs":
+                # Get original observations as tensor
+                obs_tensor = torch.tensor(np.concatenate(self.buffer.obs[step]), dtype=torch.float32)
 
-
-            # print("obs_tensor.shape:", obs_tensor.shape)
-            # print("noise.shape:", noise.shape)
-            # Add noise
-            noise = 0 * noise.reshape(-1, obs_tensor.shape[1])
-            obs_tensor = obs_tensor + noise 
-            
-
-            
-
-            # Pass noisy_obs to policy
-            value, action, action_log_prob, rnn_state, rnn_state_critic \
+                noise = self.noise_alpha * noise.reshape(-1, obs_tensor.shape[1])
+                obs_tensor = obs_tensor + noise 
+                
+                # Pass noisy_obs to policy
+                value, action, action_log_prob, rnn_state, rnn_state_critic \
+                    = self.trainer.policy.get_actions(np.concatenate(self.buffer.share_obs[step]),
+                                                    obs_tensor.cpu().numpy(),
+                                                    np.concatenate(self.buffer.rnn_states[step]),
+                                                    np.concatenate(self.buffer.rnn_states_critic[step]),
+                                                    np.concatenate(self.buffer.masks[step]),
+                                                    np.concatenate(self.buffer.available_actions[step]))
+            if self.adv_type == "act":
+                value, action, action_log_prob, rnn_state, rnn_state_critic \
                 = self.trainer.policy.get_actions(np.concatenate(self.buffer.share_obs[step]),
-                                                obs_tensor.cpu().numpy(),
+                                                np.concatenate(self.buffer.obs[step]),
                                                 np.concatenate(self.buffer.rnn_states[step]),
                                                 np.concatenate(self.buffer.rnn_states_critic[step]),
                                                 np.concatenate(self.buffer.masks[step]),
-                                                np.concatenate(self.buffer.available_actions[step]))
+                                                np.concatenate(self.buffer.available_actions[step]),
+                                                action_purtub = np.concatenate(self.noise_alpha * noise))
+
 
         # [self.envs, agents, dim]
         values = np.array(np.split(_t2n(value), self.n_rollout_threads))
@@ -194,6 +207,7 @@ class SMACRunner(Runner):
                                             np.concatenate(self.adv_buffer.rnn_states[step]),
                                             np.concatenate(self.adv_buffer.rnn_states_critic[step]),
                                             np.concatenate(self.adv_buffer.masks[step]))
+        # print("======adv actions======", action)
         # [self.envs, agents, dim]
         values = np.array(np.split(_t2n(value), self.n_rollout_threads))
         actions = np.array(np.split(_t2n(action), self.n_rollout_threads))
@@ -311,10 +325,14 @@ class SMACRunner(Runner):
                 eval_win_rate = eval_battles_won/eval_episode
                 print("eval win rate is {}.".format(eval_win_rate))
                 if self.use_wandb:
-                    wandb.log({"eval_win_rate": eval_win_rate}, step=total_num_steps)
+                    if action_purtub == 0.0:
+                        wandb.log({"eval_win_rate": eval_win_rate}, step=total_num_steps)
+                    else:
+                        wandb.log({"eval_win_rate_act_purt_at_noise_" + str(round(action_purtub,2)): eval_win_rate}, step=total_num_steps)
                 else:
                     self.writter.add_scalars("eval_win_rate", {"eval_win_rate": eval_win_rate}, total_num_steps)
                 break
+        return eval_win_rate
 
     @torch.no_grad()
     def eval_obs(self, total_num_steps, action_purtub = 0.0):
@@ -371,7 +389,7 @@ class SMACRunner(Runner):
                 eval_win_rate = eval_battles_won/eval_episode
                 print("purt_eval win rate is {}.".format(eval_win_rate))
                 if self.use_wandb:
-                    wandb.log({"eval_win_rate_purt": eval_win_rate}, step=total_num_steps)
+                    wandb.log({"eval_win_rate_obs_purt_at_noise_" + str(round(self.obs_pert_range,2)): eval_win_rate}, step=total_num_steps)
                 else:
                     self.writter.add_scalars("eval_win_rate", {"eval_win_rate": eval_win_rate}, total_num_steps)
                 break
